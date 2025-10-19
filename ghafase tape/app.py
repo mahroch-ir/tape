@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import os
@@ -6,16 +5,15 @@ import json
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 
+# ---------- صفحه ----------
 st.set_page_config(page_title="مدیریت ابزارها", page_icon="🧰")
 st.title("📦 مدیریت ابزارها")
-
 st.info("در حال اتصال به Google Drive...")
 
-# ------------------ احراز هویت Google Drive با Service Account ------------------
+# ---------- اتصال به Google Drive با Service Account ----------
 try:
     creds_dict = st.secrets["service_account"]
-
-    # ذخیره موقت فایل json برای PyDrive2
+    # ساخت فایل JSON موقت
     with open("service_account.json", "w") as f:
         json.dump(dict(creds_dict), f)
 
@@ -23,24 +21,21 @@ try:
     gauth.LoadServiceConfigFile("service_account.json")
     gauth.ServiceAuth()
     drive = GoogleDrive(gauth)
-
     st.success("✅ اتصال با موفقیت برقرار شد!")
-
 except Exception as e:
     st.error(f"❌ خطا در اتصال به Google Drive: {e}")
     st.stop()
 
-# ------------------ مسیر فایل‌ها ------------------
+# ---------- مسیرها ----------
 DATA_FILE = "tools_data.csv"
 IMAGES_DIR = "tool_images"
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
-# ------------------ پوشه مخصوص در گوگل درایو ------------------
+# ---------- پوشه مخصوص ----------
 folder_name = "ToolManager_Data"
 folders = drive.ListFile({
     'q': f"title='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
 }).GetList()
-
 if folders:
     folder_id = folders[0]['id']
 else:
@@ -49,32 +44,30 @@ else:
     folder.Upload()
     folder_id = folder['id']
 
-# ------------------ دانلود فایل CSV از Drive ------------------
+# ---------- دانلود CSV ----------
 try:
     file_list = drive.ListFile({'q': f"title='tools_data.csv' and '{folder_id}' in parents and trashed=false"}).GetList()
     if file_list:
-        file_id = file_list[0]['id']
-        downloaded = drive.CreateFile({'id': file_id})
-        downloaded.GetContentFile(DATA_FILE)
+        file_csv = file_list[0]
+        file_csv.GetContentFile(DATA_FILE)
         st.success("📥 داده‌ها از Google Drive بارگذاری شدند.")
     else:
         st.info("هیچ فایل داده‌ای در Drive پیدا نشد. (اولین اجرا)")
 except Exception as e:
     st.warning(f"⚠️ خطا در بارگذاری داده‌ها: {e}")
 
-# ------------------ بارگذاری داده‌ها ------------------
+# ---------- بارگذاری داده‌ها ----------
 if os.path.exists(DATA_FILE):
     df = pd.read_csv(DATA_FILE)
 else:
     df = pd.DataFrame(columns=["نام ابزار", "کد ابزار", "شماره قفسه", "مسیر عکس"])
 
-# ------------------ منو ------------------
+# ---------- منو ----------
 menu = st.sidebar.selectbox("📂 انتخاب صفحه", ["➕ افزودن ابزار", "📋 مشاهده ابزارها"])
 
-# ------------------ افزودن ابزار ------------------
+# ---------- افزودن ابزار ----------
 if menu == "➕ افزودن ابزار":
     st.header("➕ افزودن ابزار جدید")
-
     name = st.selectbox("نام ابزار:", ["تپه", "بنوک", "چکش", "انبردست"])
     code = st.text_input("کد ابزار:")
     shelf = st.number_input("شماره قفسه:", min_value=1, step=1)
@@ -86,16 +79,11 @@ if menu == "➕ افزودن ابزار":
             with open(img_path, "wb") as f:
                 f.write(image_file.getbuffer())
 
-            new_row = {
-                "نام ابزار": name,
-                "کد ابزار": code,
-                "شماره قفسه": shelf,
-                "مسیر عکس": img_path
-            }
+            new_row = {"نام ابزار": name, "کد ابزار": code, "شماره قفسه": shelf, "مسیر عکس": img_path}
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             df.to_csv(DATA_FILE, index=False)
 
-            # آپلود CSV در Drive
+            # آپلود CSV
             file_list = drive.ListFile({'q': f"title='tools_data.csv' and '{folder_id}' in parents and trashed=false"}).GetList()
             if file_list:
                 file_csv = file_list[0]
@@ -113,15 +101,13 @@ if menu == "➕ افزودن ابزار":
         else:
             st.warning("⚠️ لطفاً تمام فیلدها را پر کنید.")
 
-# ------------------ مشاهده ابزارها ------------------
+# ---------- مشاهده ابزارها ----------
 elif menu == "📋 مشاهده ابزارها":
     st.header("📋 لیست ابزارها")
-
     if len(df) == 0:
         st.info("هیچ ابزاری ثبت نشده است.")
     else:
         search_code = st.text_input("🔍 جستجو بر اساس کد ابزار:")
-
         if search_code:
             filtered_df = df[df["کد ابزار"].astype(str).str.contains(search_code, case=False, na=False)]
         else:
