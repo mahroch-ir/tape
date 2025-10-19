@@ -1,3 +1,5 @@
+#app.py
+
 import streamlit as st
 import pandas as pd
 from PIL import Image
@@ -11,9 +13,9 @@ st.set_page_config(page_title="مدیریت ابزارها", page_icon="🧰")
 st.title("📦 مدیریت ابزارها")
 
 # ------------------ احراز هویت Google Drive ------------------
-st.info("در حال برقراری ارتباط با Google Drive...")
+st.info("در حال اتصال به Google Drive...")
 
-# اگر credentials در secrets تعریف شده بود، از آن استفاده می‌کنیم
+# بررسی اطلاعات در Streamlit Secrets
 if "google" in st.secrets:
     creds_data = json.loads(st.secrets["google"]["client_config"])
     with open("client_secrets.json", "w") as f:
@@ -25,36 +27,57 @@ else:
 gauth = GoogleAuth()
 gauth.LoadClientConfigFile("client_secrets.json")
 
-# فایل ذخیره‌ی توکن
 TOKEN_FILE = "mycreds.json"
 
+# اگر فایل توکن وجود دارد، از آن استفاده کن
 if os.path.exists(TOKEN_FILE):
     gauth.LoadCredentialsFile(TOKEN_FILE)
     if gauth.access_token_expired:
-        gauth.Refresh()
+        try:
+            gauth.Refresh()
+        except Exception as e:
+            st.warning("توکن منقضی شده است. لطفاً مجدداً وارد شوید.")
+            gauth.LocalWebserverAuth()
     else:
         gauth.Authorize()
 else:
+    st.warning("اولین ورود: لطفاً با حساب Google وارد شوید.")
     gauth.LocalWebserverAuth()
-    gauth.SaveCredentialsFile(TOKEN_FILE)
 
+# ذخیره توکن پس از ورود
+gauth.SaveCredentialsFile(TOKEN_FILE)
 drive = GoogleDrive(gauth)
+st.success("✅ اتصال با موفقیت برقرار شد!")
 
-# ------------------ مسیر فایل‌ها ------------------
+# ------------------ مسیرها ------------------
 DATA_FILE = "tools_data.csv"
 IMAGES_DIR = "tool_images"
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
+# ------------------ ساخت پوشه در Google Drive ------------------
+folder_name = "ToolManager_Data"
+folders = drive.ListFile({'q': f"title='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"}).GetList()
+
+if folders:
+    folder_id = folders[0]['id']
+else:
+    folder_metadata = {'title': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
+    folder = drive.CreateFile(folder_metadata)
+    folder.Upload()
+    folder_id = folder['id']
+
 # ------------------ دانلود فایل CSV از Drive ------------------
 try:
-    file_list = drive.ListFile({'q': "title='tools_data.csv'"}).GetList()
+    file_list = drive.ListFile({'q': f"title='tools_data.csv' and '{folder_id}' in parents and trashed=false"}).GetList()
     if file_list:
         file_id = file_list[0]['id']
         downloaded = drive.CreateFile({'id': file_id})
         downloaded.GetContentFile(DATA_FILE)
-        st.success("📥 فایل داده‌ها از Google Drive بارگذاری شد.")
+        st.success("📥 داده‌ها از Google Drive بارگذاری شدند.")
+    else:
+        st.info("هیچ فایل داده‌ای در Drive پیدا نشد. (اولین اجرا)")
 except Exception as e:
-    st.warning("⚠️ هنوز فایلی در Google Drive وجود ندارد. (اولین اجرا)")
+    st.warning(f"⚠️ خطا در بارگذاری داده‌ها: {e}")
 
 # ------------------ بارگذاری داده‌ها ------------------
 if os.path.exists(DATA_FILE):
@@ -63,24 +86,23 @@ else:
     df = pd.DataFrame(columns=["نام ابزار", "کد ابزار", "شماره قفسه", "مسیر عکس"])
 
 # ------------------ منوی اصلی ------------------
-menu = st.sidebar.selectbox("انتخاب صفحه", ["➕ افزودن ابزار", "📋 مشاهده ابزارها"])
+menu = st.sidebar.selectbox("📂 انتخاب صفحه", ["➕ افزودن ابزار", "📋 مشاهده ابزارها"])
 
 # ------------------ افزودن ابزار ------------------
 if menu == "➕ افزودن ابزار":
-    st.header("افزودن ابزار جدید")
+    st.header("➕ افزودن ابزار جدید")
 
-    name = st.selectbox("نام ابزار:", ["تپه", "بنوک"])
+    name = st.selectbox("نام ابزار:", ["تپه", "بنوک", "چکش", "انبردست"])
     code = st.text_input("کد ابزار:")
     shelf = st.number_input("شماره قفسه:", min_value=1, step=1)
     image_file = st.file_uploader("📸 انتخاب عکس ابزار", type=["jpg", "png", "jpeg"])
 
-    if st.button("ذخیره ابزار"):
+    if st.button("💾 ذخیره ابزار"):
         if name and code and image_file:
             img_path = os.path.join(IMAGES_DIR, image_file.name)
             with open(img_path, "wb") as f:
                 f.write(image_file.getbuffer())
 
-            # افزودن داده به CSV
             new_row = {
                 "نام ابزار": name,
                 "کد ابزار": code,
@@ -90,13 +112,17 @@ if menu == "➕ افزودن ابزار":
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             df.to_csv(DATA_FILE, index=False)
 
-            # --- آپلود فایل CSV در Drive ---
-            file_csv = drive.CreateFile({'title': 'tools_data.csv'})
+            # --- آپلود فایل CSV (آپدیت یا ساخت جدید) ---
+            file_list = drive.ListFile({'q': f"title='tools_data.csv' and '{folder_id}' in parents and trashed=false"}).GetList()
+            if file_list:
+                file_csv = file_list[0]
+            else:
+                file_csv = drive.CreateFile({'title': 'tools_data.csv', 'parents': [{'id': folder_id}]})
             file_csv.SetContentFile(DATA_FILE)
             file_csv.Upload()
 
-            # --- آپلود عکس در Drive ---
-            img_drive = drive.CreateFile({'title': os.path.basename(img_path)})
+            # --- آپلود عکس در فولدر ---
+            img_drive = drive.CreateFile({'title': os.path.basename(img_path), 'parents': [{'id': folder_id}]})
             img_drive.SetContentFile(img_path)
             img_drive.Upload()
 
@@ -111,11 +137,10 @@ elif menu == "📋 مشاهده ابزارها":
     if len(df) == 0:
         st.info("هیچ ابزاری ثبت نشده است.")
     else:
-        df["کد ابزار"] = df["کد ابزار"].astype(str)
         search_code = st.text_input("🔍 جستجو بر اساس کد ابزار:")
 
         if search_code:
-            filtered_df = df[df["کد ابزار"].str.contains(search_code, case=False, na=False)]
+            filtered_df = df[df["کد ابزار"].astype(str).str.contains(search_code, case=False, na=False)]
         else:
             filtered_df = df
 
